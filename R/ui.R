@@ -28,6 +28,13 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
           border-color: #0056b3;
           font-weight: 500;
         }
+        .debug-box {
+          background-color: rgba(0,0,0,0.6);
+          color: #fff;
+          padding: 5px 10px;
+          border-radius: 4px;
+          font-size: 0.9em;
+        }
         .settings-gear-btn {
           position: absolute;
           top: 15px;

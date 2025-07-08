@@ -43,7 +43,14 @@ snkmkr <- function() {
     tryCatch({
       utils::savehistory(history_file)
       if (file.exists(history_file)) {
-        hist_lines <- unique(rev(readLines(history_file)))
+        hist_lines <- rev(readLines(history_file))
+
+        # Check if unique filtering is enabled
+        unique_flag_path <- "unique_r_history_flag.txt"
+        if (file.exists(unique_flag_path) && readLines(unique_flag_path, n = 1, warn = FALSE) == "TRUE") {
+          hist_lines <- unique(hist_lines)
+        }
+
         filtered <- hist_lines[!grepl("snkmkr\\(\\)", hist_lines)]
         # Always create or overwrite r_history.txt
         file.create("r_history.txt")
@@ -88,9 +95,6 @@ snkmkr <- function() {
     }, delay = 3)
   })
 
-  # Path for shutdown signal file
-  shutdown_file <- "snkmkr_shutdown.flag"
-
   # Create the app
   app <- shinyApp(
     ui = create_ui(
@@ -121,10 +125,6 @@ snkmkr <- function() {
 
   # Recursive monitoring function
   recursive_check <- function(interval = 0.2) {
-    # Check for shutdown signal file
-    if (file.exists("snkmkr_shutdown.flag")) {
-      return(invisible(NULL))
-    }
     # Update history files only if not paused
     if (!get("pause_history_collection", envir = .GlobalEnv)) {
       get_r_history()
