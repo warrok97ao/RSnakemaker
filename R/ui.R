@@ -269,13 +269,6 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
             selected = "r",
             inline = FALSE
           )
-        ),
-        shiny::div(class = "form-group",
-          shiny::checkboxInput(
-            "unique_r_history",
-            label = "Remove duplicate lines from R history",
-            value = TRUE
-          )
         )
       )
     ),
@@ -315,4 +308,5 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
 
 # Export create_ui to global environment
 assign("create_ui", create_ui, envir = .GlobalEnv)
+      shiny::uiOutput("debug_len_box")
 

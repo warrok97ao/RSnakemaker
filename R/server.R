@@ -212,7 +212,7 @@ server <- function(input, output, session) {
       }
     }, error = function(e) {
       shiny::showNotification(
-        paste("Failed to send to port", isolate(input$port_input), ":", e$message),
+        paste("Error", ":", e$message),
         type = "error"
       )
     })
@@ -266,7 +266,7 @@ server <- function(input, output, session) {
       }
     }, error = function(e) {
       shiny::showNotification(
-        paste("Failed to send to port", isolate(input$port_input), ":", e$message),
+        paste("Error", ":", e$message),
         type = "error"
       )
     })
@@ -290,12 +290,6 @@ server <- function(input, output, session) {
         writeLines(cmds, selected_history_path, useBytes = TRUE)
       }
     }, silent = TRUE)
-  })
-
-  # Write unique flag to file
-  observe({
-    is_unique <- input$unique_r_history %||% TRUE
-    try(writeLines(as.character(is_unique), "unique_r_history_flag.txt"), silent = TRUE)
   })
 
 
