@@ -1,0 +1,4 @@
+Name: Snakemaker
+Description: Generate snakemake rule
+Binding: snkmkr
+Interactive: false
