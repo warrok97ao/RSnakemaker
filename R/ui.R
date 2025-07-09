@@ -159,6 +159,51 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
           line-height: 1;
           font-size: 15px;
         }
+        .archive-container {
+          margin-top: 18px;
+          background: #f3f3f3;
+          border: 1px dashed #bbb;
+          border-radius: 4px;
+        }
+        .archive-header {
+          padding: 10px 15px;
+          cursor: pointer;
+          user-select: none;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: #e9ecef;
+          border-radius: 4px 4px 0 0;
+          transition: background-color 0.2s;
+        }
+        .archive-header:hover {
+          background: #dee2e6;
+        }
+        .archive-arrow {
+          transition: transform 0.2s ease;
+          font-size: 12px;
+          color: #666;
+        }
+        .archive-arrow.expanded {
+          transform: rotate(90deg);
+        }
+        .archive-content {
+          max-height: 0;
+          overflow: hidden;
+          transition: max-height 0.3s ease;
+          padding: 0 10px;
+        }
+        .archive-content.expanded {
+          max-height: 300px;
+          padding: 10px;
+          overflow-y: auto;
+        }
+        .archive-title {
+          margin: 0;
+          color: #888;
+          font-weight: 500;
+          font-size: 14px;
+        }
       ")),
       shiny::tags$script(HTML("
         // Toggle settings menu visibility
@@ -191,6 +236,7 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
 
         // Store selected lines as an array of command strings
         window.selectedHistoryLines = window.selectedHistoryLines || [];
+        window.selectedArchivedLines = window.selectedArchivedLines || [];
 
         // Function to toggle selection for multiple lines
         function toggleHistoryLine(index, command, id) {
@@ -210,6 +256,42 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
           }
           // Send all selected lines to Shiny (array of command strings)
           Shiny.setInputValue('selected_lines', window.selectedHistoryLines, {priority: 'event'});
+        }
+
+        // Function to toggle selection for archived lines
+        function toggleArchivedLine(index, command, id) {
+          var element = document.getElementById(id);
+          if (!element) return;
+          var isSelected = element.classList.contains('selected');
+          var foundIdx = window.selectedArchivedLines.indexOf(command);
+
+          if (isSelected) {
+            // Deselect
+            element.classList.remove('selected');
+            if (foundIdx !== -1) window.selectedArchivedLines.splice(foundIdx, 1);
+          } else {
+            // Select
+            element.classList.add('selected');
+            if (foundIdx === -1) window.selectedArchivedLines.push(command);
+          }
+          // Send all selected archived lines to Shiny
+          Shiny.setInputValue('selected_archived_lines', window.selectedArchivedLines, {priority: 'event'});
+        }
+
+        // Toggle archive visibility
+        function toggleArchive() {
+          var content = document.getElementById('archive-content');
+          var arrow = document.getElementById('archive-arrow');
+          if (!content || !arrow) return;
+
+          var isExpanded = content.classList.contains('expanded');
+          if (isExpanded) {
+            content.classList.remove('expanded');
+            arrow.classList.remove('expanded');
+          } else {
+            content.classList.add('expanded');
+            arrow.classList.add('expanded');
+          }
         }
 
         // Recording button icon and tooltip update
@@ -283,12 +365,6 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
       class = "history-container",
       shiny::uiOutput("selectableHistory")
     ),
-    shiny::div(
-      class = "history-container",
-      style = "margin-top: 18px; background: #f3f3f3; border: 1px dashed #bbb;",
-      shiny::tags$h5("Archived lines", style = "margin: 0 0 8px 0; color: #888; font-weight: 500;"),
-      shiny::uiOutput("archivedHistory")
-    ),
     # First row: Generate rule buttons
     shiny::div(
       style = "display: flex; justify-content: flex-end; gap: 10px;",
@@ -315,6 +391,21 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
         "export_history_btn",
         "Export history",
         class = "yellow-gradient-btn"
+      )
+    ),
+    # Archive section - moved below buttons
+    shiny::div(
+      class = "archive-container",
+      shiny::div(
+        class = "archive-header",
+        onclick = "toggleArchive();",
+        shiny::span(id = "archive-arrow", class = "archive-arrow", "▶"),
+        shiny::h5(class = "archive-title", "Archived lines")
+      ),
+      shiny::div(
+        id = "archive-content",
+        class = "archive-content",
+        shiny::uiOutput("archivedHistory")
       )
     ),
     shiny::div(

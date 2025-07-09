@@ -21,10 +21,12 @@ server <- function(input, output, session) {
   hist_path_r <- "r_history.txt"
   hist_path_term <- "bash_history.txt"
   selected_history_path <- "selected_history.txt"
+  selected_archived_path <- "selected_archived.txt"
 
   # Reactive values to manage app state
   recording <- reactiveVal(TRUE)  # Whether history is being tracked
   selectedLines <- reactiveVal(character())  # Currently selected lines
+  selectedArchivedLines <- reactiveVal(character())  # Currently selected archived lines
   last_history <- reactiveVal(list(r = character(), term = character()))  # Last read snapshot
   shown_history <- reactiveVal(list(r = character(), term = character()))  # All shown lines
   send_selected_now <- reactiveVal(FALSE)  # Trigger to send selected lines
@@ -120,7 +122,7 @@ server <- function(input, output, session) {
     do.call(shiny::tagList, history_elements)
   })
 
-  # Render archived (hidden) lines separately
+  # Render archived (hidden) lines separately with selection capability
   output$archivedHistory <- renderUI({
     history_type <- input$history_type %||% "r"
     hist_key <- if (history_type == "r") "r" else "term"
@@ -132,11 +134,17 @@ server <- function(input, output, session) {
       return(shiny::div("No archived lines.", style = "color: #666; font-style: italic;"))
     }
 
-    archived_elements <- lapply(hidden_indices, function(i) {
+    archived_elements <- lapply(seq_along(hidden_indices), function(idx) {
+      i <- hidden_indices[idx]
       if (i > 0 && i <= length(all_lines)) {
         line <- all_lines[[i]]
+        line_id <- paste0("archived_line_", i)
         shiny::div(
-          class = "history-line archived-line",
+          id = line_id,
+          class = "history-line",
+          `data-index` = i,
+          onclick = paste0("toggleArchivedLine(", i, ", '",
+                           gsub("'", "\\\\'", line), "', '", line_id, "');"),
           line
         )
       }
@@ -162,14 +170,18 @@ server <- function(input, output, session) {
     send_selected_now(FALSE)
 
     tryCatch({
-      cmds <- if (file.exists(selected_history_path)) readLines(selected_history_path, warn = FALSE) else character()
+      # Combine selected lines from both current and archived
+      current_cmds <- if (file.exists(selected_history_path)) readLines(selected_history_path, warn = FALSE) else character()
+      archived_cmds <- if (file.exists(selected_archived_path)) readLines(selected_archived_path, warn = FALSE) else character()
+      
+      all_cmds <- c(current_cmds, archived_cmds)
 
-      if (length(cmds) == 0) {
+      if (length(all_cmds) == 0) {
         shiny::showNotification("No selected lines to send.", type = "warning")
         return()
       }
 
-      json_data <- jsonlite::toJSON(list(command = "push_r", data = cmds), auto_unbox = TRUE)
+      json_data <- jsonlite::toJSON(list(command = "push_r", data = all_cmds), auto_unbox = TRUE)
       selected_port <- isolate(input$port_input)
       target_url <- paste0("http://localhost:", selected_port)
 
@@ -181,14 +193,18 @@ server <- function(input, output, session) {
       )
 
       if (result$status_code == 200) {
-        # Hide the lines that were just sent
+        # Hide the lines that were just sent (only from current history)
         hist_key <- input$history_type %||% "r"
         all_lines <- shown_history()[[hist_key]]
-        hidden_idx <- which(all_lines %in% cmds)
+        hidden_idx <- which(all_lines %in% current_cmds)
 
         current_hidden <- hidden_line_indices()
         current_hidden[[hist_key]] <- unique(c(current_hidden[[hist_key]], hidden_idx))
         hidden_line_indices(current_hidden)
+
+        # Clear selected files
+        try(writeLines(character(), selected_history_path, useBytes = TRUE), silent = TRUE)
+        try(writeLines(character(), selected_archived_path, useBytes = TRUE), silent = TRUE)
 
         shiny::showNotification("Rules and files correctly generated from selection!", type = "message")
       } else if (result$status_code == 400) {
@@ -199,6 +215,21 @@ server <- function(input, output, session) {
     }, error = function(e) {
       shiny::showNotification(paste("Error:", e$message), type = "error")
     })
+  })
+
+  # Store currently selected archived lines into file and reactive variable
+  observe({
+    cmds <- character()
+    selected <- input$selected_archived_lines
+    if (!is.null(selected) && length(selected) > 0) {
+      cmds <- vapply(selected, as.character, character(1))
+      cmds <- cmds[!is.na(cmds) & cmds != ""]
+    }
+    selectedArchivedLines(cmds)
+
+    try({
+      writeLines(cmds, selected_archived_path, useBytes = TRUE)
+    }, silent = TRUE)
   })
 
   # Store currently selected lines into file and reactive variable
