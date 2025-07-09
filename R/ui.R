@@ -113,6 +113,13 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
           color: #111;
           box-shadow: 0 2px 8px rgba(255, 215, 0, 0.18);
         }
+        .red-btn {
+          background: #e74c3c;
+          color: white;
+        }
+        .red-btn:hover {
+          background: #c0392b;
+        }
         .record-btn {
           position: absolute;
           top: 17px;
@@ -276,6 +283,12 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
       class = "history-container",
       shiny::uiOutput("selectableHistory")
     ),
+    shiny::div(
+      class = "history-container",
+      style = "margin-top: 18px; background: #f3f3f3; border: 1px dashed #bbb;",
+      shiny::tags$h5("Archived lines", style = "margin: 0 0 8px 0; color: #888; font-weight: 500;"),
+      shiny::uiOutput("archivedHistory")
+    ),
     # First row: Generate rule buttons
     shiny::div(
       style = "display: flex; justify-content: flex-end; gap: 10px;",
@@ -292,7 +305,12 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
     ),
     # Second row: Export history button
     shiny::div(
-      style = "display: flex; justify-content: flex-end; margin-top: 4px;",
+      style = "display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;",
+      shiny::actionButton(
+        "clear_history_btn",
+        "Clear History",
+        class = "yellow-gradient-btn red-btn"
+      ),
       shiny::downloadButton(
         "export_history_btn",
         "Export history",
@@ -308,5 +326,4 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
 
 # Export create_ui to global environment
 assign("create_ui", create_ui, envir = .GlobalEnv)
-      shiny::uiOutput("debug_len_box")
 

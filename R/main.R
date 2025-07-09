@@ -45,6 +45,12 @@ snkmkr <- function() {
       if (file.exists(history_file)) {
         hist_lines <- rev(readLines(history_file))
 
+        # Check if unique filtering is enabled
+        unique_flag_path <- "unique_r_history_flag.txt"
+        if (file.exists(unique_flag_path) && readLines(unique_flag_path, n = 1, warn = FALSE) == "TRUE") {
+          hist_lines <- unique(hist_lines)
+        }
+
         filtered <- hist_lines[!grepl("snkmkr\\(\\)", hist_lines)]
         # Always create or overwrite r_history.txt
         file.create("r_history.txt")

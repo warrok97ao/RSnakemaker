@@ -1,7 +1,5 @@
 server <- function(input, output, session) {
-  # Kill background process on close
   session$onSessionEnded(function() {
-    # Delete all .txt files in the working directory (temp history files)
     txt_files <- list.files(pattern = "\\.txt$", full.names = TRUE)
     try(unlink(txt_files, force = TRUE), silent = TRUE)
     if (exists("shiny_bg_process", envir = .GlobalEnv)) {
@@ -13,65 +11,58 @@ server <- function(input, output, session) {
     stopApp()
   })
 
-  # History paths
   hist_path_r <- "r_history.txt"
   hist_path_term <- "bash_history.txt"
   selected_history_path <- "selected_history.txt"
 
-  # State holders
   recording <- reactiveVal(TRUE)
   selectedLines <- reactiveVal(character())
   last_history <- reactiveVal(list(r = character(), term = character()))
   shown_history <- reactiveVal(list(r = character(), term = character()))
   send_selected_now <- reactiveVal(FALSE)
-  debug_line_count <- reactiveVal(list(r = 0, term = 0))
 
-  # On startup, set the correct button state
+  hidden_line_indices <- reactiveVal(list(r = integer(), term = integer()))
+
   observe({
     session$sendCustomMessage("updateRecordBtn", list(recording = recording()))
   })
 
-  # Toggle recording
   observeEvent(input$toggle_record, {
-    hist_r <- if (file.exists(hist_path_r)) {
-      lines <- readLines(hist_path_r, warn = FALSE)
-    } else {
-      character()
-    }
+    hist_r <- if (file.exists(hist_path_r)) readLines(hist_path_r, warn = FALSE) else character()
     hist_term <- if (file.exists(hist_path_term)) readLines(hist_path_term, warn = FALSE) else character()
 
     last_history(list(r = hist_r, term = hist_term))
 
     recording(!recording())
     session$sendCustomMessage("updateRecordBtn", list(recording = recording()))
-    shiny::showNotification(
-      if (recording()) "Start Recording" else "Stop Recording",
-      type = if (recording()) "message" else "warning",
-      duration = 2
-    )
+    shiny::showNotification(if (recording()) "Start Recording" else "Stop Recording",
+                            type = if (recording()) "message" else "warning",
+                            duration = 2)
   })
 
-  # Reactive display
   historyText <- reactiveVal("")
   observe({
     invalidateLater(200, session)
     history_type <- input$history_type %||% "r"
-    hist_path <- if (history_type == "r") hist_path_r else hist_path_term
     hist_key <- if (history_type == "r") "r" else "term"
+    hist_path <- if (history_type == "r") hist_path_r else hist_path_term
 
     if (recording()) {
       if (file.exists(hist_path)) {
         current_hist <- readLines(hist_path, warn = FALSE)
 
-        new_hist <- current_hist
-        if (length(new_hist) == 0) new_hist <- character()
+        # 🆕 Accumulate new lines into shown_history
         tmp <- shown_history()
-        tmp[[hist_key]] <- new_hist
+        existing <- tmp[[hist_key]]
+        new_lines <- setdiff(current_hist, existing)
+        tmp[[hist_key]] <- c(existing, new_lines)
         shown_history(tmp)
-        historyText(paste(new_hist, collapse = "\n"))
+
         snapshot <- last_history()
         snapshot[[hist_key]] <- current_hist
         last_history(snapshot)
+
+        historyText(paste(current_hist, collapse = "\n"))
       } else {
         historyText("No history file found.")
       }
@@ -80,29 +71,24 @@ server <- function(input, output, session) {
     }
   })
 
-  # History UI
   output$selectableHistory <- renderUI({
     history_type <- input$history_type %||% "r"
     hist_key <- if (history_type == "r") "r" else "term"
+
     all_lines <- shown_history()[[hist_key]]
+    hidden_indices <- hidden_line_indices()[[hist_key]]
 
-    lines_to_skip <- debug_line_count()[[hist_key]]
-    history_lines <- all_lines
-
-    if (lines_to_skip > 0 && length(all_lines) > lines_to_skip) {
-      # Newest entries are at the top, so take the difference from the top
-      history_lines <- all_lines[1:(length(all_lines) - lines_to_skip)]
-    } else if (lines_to_skip > 0 && length(all_lines) <= lines_to_skip) {
-      # If history was cleared or is smaller, show nothing
-      history_lines <- character(0)
+    if (length(all_lines) == 0) {
+      return(shiny::div("No history available.", style = "color: #666; font-style: italic;"))
     }
 
-    if (length(history_lines) == 0) {
-      return(shiny::div("No new history available", style = "color: #666; font-style: italic;"))
+    visible_indices <- setdiff(seq_along(all_lines), hidden_indices)
+    if (length(visible_indices) == 0) {
+      return(shiny::div("No new history available.", style = "color: #666; font-style: italic;"))
     }
 
-    history_elements <- lapply(seq_along(history_lines), function(i) {
-      line <- history_lines[i]
+    history_elements <- lapply(visible_indices, function(i) {
+      line <- all_lines[[i]]
       line_id <- paste0("history_line_", i)
       shiny::div(
         id = line_id,
@@ -117,134 +103,53 @@ server <- function(input, output, session) {
     do.call(shiny::tagList, history_elements)
   })
 
-  # Restore selection after UI update
+  # 🆕 Render archived (hidden) lines for the selected history type
+  output$archivedHistory <- renderUI({
+    history_type <- input$history_type %||% "r"
+    hist_key <- if (history_type == "r") "r" else "term"
+
+    all_lines <- shown_history()[[hist_key]]
+    hidden_indices <- hidden_line_indices()[[hist_key]]
+
+    if (length(hidden_indices) == 0) {
+      return(shiny::div("No archived lines.", style = "color: #666; font-style: italic;"))
+    }
+
+    archived_elements <- lapply(hidden_indices, function(i) {
+      if (i > 0 && i <= length(all_lines)) {
+        line <- all_lines[[i]]
+        shiny::div(
+          class = "history-line archived-line",
+          line
+        )
+      }
+    })
+
+    do.call(shiny::tagList, archived_elements)
+  })
+
   observe({
     sel <- selectedLines()
     session$sendCustomMessage("restoreSelectedLines", list(commands = sel))
   })
 
-  # JS event for multiple selections
-  output$selectableHistory <- renderUI({
-    history_type <- input$history_type %||% "r"
-    hist_key <- if (history_type == "r") "r" else "term"
-    all_lines <- shown_history()[[hist_key]]
-
-    lines_to_skip <- debug_line_count()[[hist_key]]
-    history_lines <- all_lines
-
-    if (lines_to_skip > 0 && length(all_lines) > lines_to_skip) {
-      history_lines <- all_lines[1:(length(all_lines) - lines_to_skip)]
-    } else if (lines_to_skip > 0 && length(all_lines) <= lines_to_skip) {
-      history_lines <- character(0)
-    }
-
-
-    if (length(history_lines) == 0) {
-      return(shiny::div("No new history available", style = "color: #666; font-style: italic;"))
-    }
-
-    history_elements <- lapply(seq_along(history_lines), function(i) {
-      line <- history_lines[i]
-      line_id <- paste0("history_line_", i)
-
-      shiny::div(
-        id = line_id,
-        class = "history-line",
-        `data-index` = i,
-        onclick = paste0("toggleHistoryLine(", i, ", '",
-                         gsub("'", "\\\\'", line), "', '", line_id, "');"),
-        line
-      )
-    })
-
-    do.call(shiny::tagList, history_elements)
-  })
-
-  # Send all history as JSON
-  observeEvent(input$send_history_json, {
-    tryCatch({
-      history_type <- input$history_type %||% "r"
-      hist_key <- if (history_type == "r") "r" else "term"
-      all_history <- shown_history()[[hist_key]]
-      lines_to_skip <- debug_line_count()[[hist_key]]
-
-      history_to_send <- all_history
-      if (lines_to_skip > 0) {
-        if (length(all_history) > lines_to_skip) {
-          # Newest entries are at the top, so take the difference from the top
-          history_to_send <- all_history[1:(length(all_history) - lines_to_skip)]
-        } else {
-          # If history was cleared or is smaller, there's nothing new to send
-          history_to_send <- character(0)
-        }
-      }
-
-      if (length(history_to_send) == 0) {
-        shiny::showNotification("No new history to send.", type = "warning")
-        return()
-      }
-
-      json_data <- jsonlite::toJSON(list(
-        command = "push_r",
-        data = history_to_send
-      ), auto_unbox = TRUE)
-      selected_port <- isolate(input$port_input)
-      target_url <- paste0("http://localhost:", selected_port)
-
-      result <- httr::POST(
-        url = target_url,
-        body = json_data,
-        encode = "json",
-        httr::add_headers("Content-Type" = "application/json")
-      )
-
-      if (result$status_code == 200) {
-        counts <- debug_line_count()
-        counts[[hist_key]] <- length(all_history)
-        debug_line_count(counts)
-        shiny::showNotification("Rules and files correctly generated!", type = "message")
-      } else if (result$status_code == 400) {
-        shiny::showNotification("Snakemaker is not listening to the selected port", type = "error")
-      } else if (result$status_code == 505) {
-        shiny::showNotification("Something went wrong", type = "error")
-      } else {
-        shiny::showNotification(paste("Unexpected status code:", result$status_code), type = "error")
-      }
-    }, error = function(e) {
-      shiny::showNotification(
-        paste("Error", ":", e$message),
-        type = "error"
-      )
-    })
-  })
-
-  # Step 1: Trigger the selected send separately
   observeEvent(input$send_selected_history_json, {
     send_selected_now(TRUE)
   })
 
-  # Step 2: Actual sender (delayed one reactive cycle)
   observeEvent(send_selected_now(), {
     req(send_selected_now())
     send_selected_now(FALSE)
 
     tryCatch({
-      # Read from file instead of using selectedLines()
-      if (file.exists(selected_history_path)) {
-        cmds <- readLines(selected_history_path, warn = FALSE)
-      } else {
-        cmds <- character()
-      }
+      cmds <- if (file.exists(selected_history_path)) readLines(selected_history_path, warn = FALSE) else character()
+
       if (length(cmds) == 0) {
         shiny::showNotification("No selected lines to send.", type = "warning")
         return()
       }
 
-      json_data <- jsonlite::toJSON(list(
-        command = "push_r",
-        data = cmds
-      ), auto_unbox = TRUE)
-
+      json_data <- jsonlite::toJSON(list(command = "push_r", data = cmds), auto_unbox = TRUE)
       selected_port <- isolate(input$port_input)
       target_url <- paste0("http://localhost:", selected_port)
 
@@ -256,23 +161,25 @@ server <- function(input, output, session) {
       )
 
       if (result$status_code == 200) {
+        hist_key <- input$history_type %||% "r"
+        all_lines <- shown_history()[[hist_key]]
+        hidden_idx <- which(all_lines %in% cmds)
+
+        current_hidden <- hidden_line_indices()
+        current_hidden[[hist_key]] <- unique(c(current_hidden[[hist_key]], hidden_idx))
+        hidden_line_indices(current_hidden)
+
         shiny::showNotification("Rules and files correctly generated from selection!", type = "message")
       } else if (result$status_code == 400) {
         shiny::showNotification("Snakemaker is not listening to the selected port", type = "error")
-      } else if (result$status_code == 505) {
-        shiny::showNotification("Something went wrong", type = "error")
       } else {
-        shiny::showNotification(paste("Unexpected status code:", result$status_code), type = "error")
+        shiny::showNotification("Unexpected error occurred.", type = "error")
       }
     }, error = function(e) {
-      shiny::showNotification(
-        paste("Error", ":", e$message),
-        type = "error"
-      )
+      shiny::showNotification(paste("Error:", e$message), type = "error")
     })
   })
 
-  # Save selected lines to file whenever they change
   observe({
     cmds <- character()
     selected <- input$selected_lines
@@ -283,25 +190,69 @@ server <- function(input, output, session) {
     selectedLines(cmds)
 
     try({
-      if (length(cmds) == 0) {
-        file.create(selected_history_path)
-        writeLines(character(0), selected_history_path, useBytes = TRUE)
-      } else {
-        writeLines(cmds, selected_history_path, useBytes = TRUE)
-      }
+      writeLines(cmds, selected_history_path, useBytes = TRUE)
     }, silent = TRUE)
   })
 
+  observeEvent(input$send_history_json, {
+    tryCatch({
+      history_type <- input$history_type %||% "r"
+      hist_key <- if (history_type == "r") "r" else "term"
+      all_history <- shown_history()[[hist_key]]
+      hidden_indices <- hidden_line_indices()[[hist_key]]
 
-  # Export history handler
+      visible_indices <- setdiff(seq_along(all_history), hidden_indices)
+      history_to_send <- all_history[visible_indices]
+
+      if (length(history_to_send) == 0) {
+        shiny::showNotification("No new history to send.", type = "warning")
+        return()
+      }
+
+      json_data <- jsonlite::toJSON(list(command = "push_r", data = history_to_send), auto_unbox = TRUE)
+      selected_port <- isolate(input$port_input)
+      target_url <- paste0("http://localhost:", selected_port)
+
+      result <- httr::POST(
+        url = target_url,
+        body = json_data,
+        encode = "json",
+        httr::add_headers("Content-Type" = "application/json")
+      )
+
+      if (result$status_code == 200) {
+        current_hidden <- hidden_line_indices()
+        current_hidden[[hist_key]] <- unique(c(current_hidden[[hist_key]], visible_indices))
+        hidden_line_indices(current_hidden)
+
+        shiny::showNotification("Rules and files correctly generated from visible history!", type = "message")
+      } else if (result$status_code == 400) {
+        shiny::showNotification("Snakemaker is not listening to the selected port", type = "error")
+      } else if (result$status_code == 505) {
+        shiny::showNotification("Something went wrong", type = "error")
+      } else {
+        shiny::showNotification(paste("Unexpected status code:", result$status_code), type = "error")
+      }
+    }, error = function(e) {
+      shiny::showNotification(paste("Error:", e$message), type = "error")
+    })
+  })
+
+  observeEvent(input$clear_history_btn, {
+    history_type <- input$history_type %||% "r"
+    hist_key <- if (history_type == "r") "r" else "term"
+    all_lines <- shown_history()[[hist_key]]
+    new_hidden <- hidden_line_indices()
+    new_hidden[[hist_key]] <- seq_along(all_lines)
+    hidden_line_indices(new_hidden)
+
+    shiny::showNotification("History view has been cleared.", type = "message", duration = 2)
+  })
+
   output$export_history_btn <- downloadHandler(
     filename = function() {
       history_type <- input$history_type %||% "r"
-      if (history_type == "r") {
-        "r_history_export.txt"
-      } else {
-        "bash_history_export.txt"
-      }
+      if (history_type == "r") "r_history_export.txt" else "bash_history_export.txt"
     },
     content = function(file) {
       history_type <- input$history_type %||% "r"
@@ -311,13 +262,12 @@ server <- function(input, output, session) {
     }
   )
 
-  # Debug output for line count
   output$debug_len_box <- renderUI({
     history_type <- input$history_type %||% "r"
     hist_key <- if (history_type == "r") "r" else "term"
-    count <- debug_line_count()[[hist_key]]
-    if (count > 0) {
-      shiny::div(class = "debug-box", paste("History lines baseline:", count))
+    hidden <- hidden_line_indices()[[hist_key]]
+    if (length(hidden) > 0) {
+      shiny::div(class = "debug-box", paste("Hidden line indices:", paste(hidden, collapse = ", ")))
     }
   })
 }
