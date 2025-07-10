@@ -31,6 +31,7 @@ server <- function(input, output, session) {
   shown_history <- reactiveVal(list(r = character(), term = character()))  # All shown lines
   send_selected_now <- reactiveVal(FALSE)  # Trigger to send selected lines
   hidden_line_indices <- reactiveVal(list(r = integer(), term = integer()))  # Indices of hidden lines
+  delete_line_indices <- reactiveVal(list(r= integer(), term = integer())) # Indices of removed lines
 
   # Update frontend recording button state
   observe({
@@ -62,16 +63,33 @@ server <- function(input, output, session) {
     hist_key <- if (history_type == "r") "r" else "term"
     hist_path <- if (history_type == "r") hist_path_r else hist_path_term
 
+    # Check pause_history_collection flag from .GlobalEnv
+    pause_history_collection <- FALSE
+    if (exists("pause_history_collection", envir = .GlobalEnv)) {
+      pause_history_collection <- get("pause_history_collection", envir = .GlobalEnv)
+    }
+
     if (recording()) {
       if (file.exists(hist_path)) {
         current_hist <- readLines(hist_path, warn = FALSE)
 
-        # Append only new lines to the shown history
         tmp <- shown_history()
         existing <- tmp[[hist_key]]
         new_lines <- setdiff(current_hist, existing)
-        tmp[[hist_key]] <- c(existing, new_lines)
-        shown_history(tmp)
+
+        if (pause_history_collection && length(new_lines) > 0) {
+          # Flag new lines as deleted so they are not shown
+          del_idx <- delete_line_indices()
+          # Indices are relative to all lines, so find their indices in current_hist
+          new_indices <- which(current_hist %in% new_lines)
+          del_idx[[hist_key]] <- unique(c(del_idx[[hist_key]], new_indices))
+          delete_line_indices(del_idx)
+          # Do NOT add these lines to shown_history
+        } else {
+          # Append only new lines to the shown history
+          tmp[[hist_key]] <- c(existing, new_lines)
+          shown_history(tmp)
+        }
 
         # Update last snapshot
         snapshot <- last_history()
@@ -95,17 +113,19 @@ server <- function(input, output, session) {
 
     all_lines <- shown_history()[[hist_key]]
     hidden_indices <- hidden_line_indices()[[hist_key]]
+    delete_indices <- delete_line_indices()[[hist_key]]
 
     if (length(all_lines) == 0) {
       return(shiny::div("No history available.", style = "color: #666; font-style: italic;"))
     }
 
-    visible_indices <- setdiff(seq_along(all_lines), hidden_indices)
+    combined_excluded <- union(hidden_indices, delete_indices)
+    visible_indices <- setdiff(seq_along(all_lines), combined_excluded)
+
     if (length(visible_indices) == 0) {
       return(shiny::div("No new history available.", style = "color: #666; font-style: italic;"))
     }
 
-    # Generate clickable divs for each visible line
     history_elements <- lapply(visible_indices, function(i) {
       line <- all_lines[[i]]
       line_id <- paste0("history_line_", i)
@@ -121,6 +141,7 @@ server <- function(input, output, session) {
 
     do.call(shiny::tagList, history_elements)
   })
+
 
   # Render archived (hidden) lines separately with selection capability
   output$archivedHistory <- renderUI({
@@ -153,6 +174,7 @@ server <- function(input, output, session) {
     do.call(shiny::tagList, archived_elements)
   })
 
+
   # Restore selected lines on frontend
   observe({
     sel <- selectedLines()
@@ -170,18 +192,15 @@ server <- function(input, output, session) {
     send_selected_now(FALSE)
 
     tryCatch({
-      # Combine selected lines from both current and archived
-      current_cmds <- if (file.exists(selected_history_path)) readLines(selected_history_path, warn = FALSE) else character()
-      archived_cmds <- if (file.exists(selected_archived_path)) readLines(selected_archived_path, warn = FALSE) else character()
-      
-      all_cmds <- c(current_cmds, archived_cmds)
+      send_cmds <- if (file.exists(selected_history_path)) readLines(selected_history_path, warn = FALSE) else character()
 
-      if (length(all_cmds) == 0) {
+
+      if (length(send_cmds) == 0) {
         shiny::showNotification("No selected lines to send.", type = "warning")
         return()
       }
 
-      json_data <- jsonlite::toJSON(list(command = "push_r", data = all_cmds), auto_unbox = TRUE)
+      json_data <- jsonlite::toJSON(list(command = "push_r", data = send_cmds), auto_unbox = TRUE)
       selected_port <- isolate(input$port_input)
       target_url <- paste0("http://localhost:", selected_port)
 
@@ -196,7 +215,7 @@ server <- function(input, output, session) {
         # Hide the lines that were just sent (only from current history)
         hist_key <- input$history_type %||% "r"
         all_lines <- shown_history()[[hist_key]]
-        hidden_idx <- which(all_lines %in% current_cmds)
+        hidden_idx <- which(all_lines %in% send_cmds)
 
         current_hidden <- hidden_line_indices()
         current_hidden[[hist_key]] <- unique(c(current_hidden[[hist_key]], hidden_idx))
@@ -204,8 +223,6 @@ server <- function(input, output, session) {
 
         # Clear selected files
         try(writeLines(character(), selected_history_path, useBytes = TRUE), silent = TRUE)
-        try(writeLines(character(), selected_archived_path, useBytes = TRUE), silent = TRUE)
-
         shiny::showNotification("Rules and files correctly generated from selection!", type = "message")
       } else if (result$status_code == 400) {
         shiny::showNotification("Snakemaker is not listening to the selected port", type = "error")
@@ -219,16 +236,16 @@ server <- function(input, output, session) {
 
   # Store currently selected archived lines into file and reactive variable
   observe({
-    cmds <- character()
+    arc_cmds <- character()
     selected <- input$selected_archived_lines
     if (!is.null(selected) && length(selected) > 0) {
-      cmds <- vapply(selected, as.character, character(1))
-      cmds <- cmds[!is.na(cmds) & cmds != ""]
+      arc_cmds <- vapply(selected, as.character, character(1))
+      arc_cmds <- arc_cmds[!is.na(arc_cmds) & arc_cmds != ""]
     }
-    selectedArchivedLines(cmds)
+    selectedArchivedLines(arc_cmds)
 
     try({
-      writeLines(cmds, selected_archived_path, useBytes = TRUE)
+      writeLines(arc_cmds, selected_archived_path, useBytes = TRUE)
     }, silent = TRUE)
   })
 
@@ -254,8 +271,9 @@ server <- function(input, output, session) {
       hist_key <- if (history_type == "r") "r" else "term"
       all_history <- shown_history()[[hist_key]]
       hidden_indices <- hidden_line_indices()[[hist_key]]
+      delete_indices <- delete_line_indices()[[hist_key]]
 
-      visible_indices <- setdiff(seq_along(all_history), hidden_indices)
+      visible_indices <- setdiff(seq_along(all_history), hidden_indices, delete_indices)
       history_to_send <- all_history[visible_indices]
 
       if (length(history_to_send) == 0) {
@@ -293,16 +311,41 @@ server <- function(input, output, session) {
     })
   })
 
-  # Clear visible history by marking all lines as hidden
+  # Clear selected lines by marking them as hidden
   observeEvent(input$clear_history_btn, {
     history_type <- input$history_type %||% "r"
     hist_key <- if (history_type == "r") "r" else "term"
     all_lines <- shown_history()[[hist_key]]
-    new_hidden <- hidden_line_indices()
-    new_hidden[[hist_key]] <- seq_along(all_lines)
-    hidden_line_indices(new_hidden)
 
-    shiny::showNotification("History view has been cleared.", type = "message", duration = 2)
+    # Only get currently selected lines from visible history
+    current_selected <- selectedLines()
+    # If you want to clear archived selections separately, handle selectedArchivedLines() in a different handler
+
+    if (length(current_selected) == 0) {
+      shiny::showNotification("No lines selected to delete.", type = "warning", duration = 2)
+      return()
+    }
+
+    # Find indices of selected lines to hide
+    selected_indices <- which(all_lines %in% current_selected)
+
+    if (length(selected_indices) > 0) {
+      # Add selected indices to hidden lines
+      new_deleted <- delete_line_indices()
+      new_deleted[[hist_key]] <- unique(c(new_deleted[[hist_key]], selected_indices))
+      delete_line_indices(new_deleted)
+
+      # Clear selection files and reactive values
+      selectedLines(character())
+      try(writeLines(character(), selected_history_path, useBytes = TRUE), silent = TRUE)
+
+      # Clear frontend selections
+      session$sendCustomMessage("restoreSelectedLines", list(commands = character()))
+
+      shiny::showNotification(paste("Deleted", length(selected_indices), "selected lines."), type = "message", duration = 2)
+    } else {
+      shiny::showNotification("Selected lines not found in current history.", type = "warning", duration = 2)
+    }
   })
 
   # Allow download/export of current full history (including hidden lines)
@@ -319,13 +362,17 @@ server <- function(input, output, session) {
     }
   )
 
-  # Display current hidden line indices (for debugging)
-  output$debug_len_box <- renderUI({
-    history_type <- input$history_type %||% "r"
-    hist_key <- if (history_type == "r") "r" else "term"
-    hidden <- hidden_line_indices()[[hist_key]]
-    if (length(hidden) > 0) {
-      shiny::div(class = "debug-box", paste("Hidden line indices:", paste(hidden, collapse = ", ")))
-    }
-  })
 }
+  )
+
+}
+    content = function(file) {
+      history_type <- input$history_type %||% "r"
+      hist_key <- if (history_type == "r") "r" else "term"
+      lines <- shown_history()[[hist_key]]
+      writeLines(lines, file, useBytes = TRUE)
+    }
+  )
+
+}
+  )

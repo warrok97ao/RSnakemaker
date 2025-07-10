@@ -384,7 +384,7 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
       style = "display: flex; justify-content: flex-end; gap: 10px; margin-top: 4px;",
       shiny::actionButton(
         "clear_history_btn",
-        "Clear History",
+        "Delete Selected Lines",
         class = "yellow-gradient-btn red-btn"
       ),
       shiny::downloadButton(
@@ -393,7 +393,8 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
         class = "yellow-gradient-btn"
       )
     ),
-    # Archive section - moved below buttons
+
+    # Archive section - moved to bottom
     shiny::div(
       class = "archive-container",
       shiny::div(
@@ -407,10 +408,6 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
         class = "archive-content",
         shiny::uiOutput("archivedHistory")
       )
-    ),
-    shiny::div(
-      style = "position: fixed; bottom: 10px; right: 10px; z-index: 9999;",
-      shiny::uiOutput("debug_len_box")
     )
   )
 }
