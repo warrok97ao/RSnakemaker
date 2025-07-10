@@ -363,16 +363,3 @@ server <- function(input, output, session) {
   )
 
 }
-  )
-
-}
-    content = function(file) {
-      history_type <- input$history_type %||% "r"
-      hist_key <- if (history_type == "r") "r" else "term"
-      lines <- shown_history()[[hist_key]]
-      writeLines(lines, file, useBytes = TRUE)
-    }
-  )
-
-}
-  )
