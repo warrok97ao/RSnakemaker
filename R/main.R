@@ -1,4 +1,12 @@
 snkmkr <- function() {
+  # List of required packages
+  pkgs <- c("shiny", "callr", "later", "rstudioapi", "jsonlite", "httr", "bslib", "keyring")
+  # Install any missing packages
+  to_install <- pkgs[!sapply(pkgs, requireNamespace, quietly = TRUE)]
+  if (length(to_install) > 0) {
+    install.packages(to_install)
+  }
+
   suppressPackageStartupMessages(library(shiny))
   suppressPackageStartupMessages(library(callr))
   suppressPackageStartupMessages(library(later))
@@ -7,6 +15,7 @@ snkmkr <- function() {
   suppressPackageStartupMessages(library(httr))
   suppressPackageStartupMessages(library(bslib))
   suppressPackageStartupMessages(library(keyring))
+
 
   # Add global variable to track history pause
   pause_history_collection <- FALSE
