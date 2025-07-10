@@ -407,9 +407,14 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
         id = "archive-content",
         class = "archive-content",
         shiny::uiOutput("archivedHistory")
+
+
       )
-    )
+    ),
+    shiny::verbatimTextOutput("debug_indices", placeholder = TRUE)
+
   )
+
 }
 
 # Export create_ui to global environment
