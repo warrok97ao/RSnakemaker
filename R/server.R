@@ -30,11 +30,15 @@ server <- function(input, output, session) {
   # Reactive state
   recording <- reactiveVal(TRUE)
   selectedLines <- reactiveVal(list(r = character(), term = character()))
+  selected_index <- reactiveVal(list(r=character(), term= character()))
   last_history <- reactiveVal(list(r = character(), term = character()))
   shown_history <- reactiveVal(list(r = character(), term = character()))
   send_selected_now <- reactiveVal(FALSE)
   hidden_line_indices <- reactiveVal(list(r = integer(), term = integer()))
   delete_line_indices <- reactiveVal(list(r = integer(), term = integer()))
+
+  # Track the last index at which recording was paused for each history type
+  pause_start_index <- reactiveVal(list(r = 0L, term = 0L))
 
   observe({
     session$sendCustomMessage("updateRecordBtn", list(recording = recording()))
@@ -45,6 +49,16 @@ server <- function(input, output, session) {
     hist_term <- if (file.exists(hist_path_term)) readLines(hist_path_term, warn = FALSE) else character()
 
     last_history(list(r = hist_r, term = hist_term))
+
+    # If we are pausing (i.e., going from recording to not recording), store the current length
+    if (recording()) {
+      # About to pause
+      pause_idx <- pause_start_index()
+      pause_idx$r <- length(hist_r)
+      pause_idx$term <- length(hist_term)
+      pause_start_index(pause_idx)
+    }
+
     recording(!recording())
     session$sendCustomMessage("updateRecordBtn", list(recording = recording()))
 
@@ -63,25 +77,29 @@ server <- function(input, output, session) {
     hist_key <- if (history_type == "r") "r" else "term"
     hist_path <- if (history_type == "r") hist_path_r else hist_path_term
 
-    if (recording()) {
-      if (file.exists(hist_path)) {
-        current_hist <- readLines(hist_path, warn = FALSE)
-
-        tmp <- shown_history()
-        tmp[[hist_key]] <- current_hist
-        shown_history(tmp)
-
-        snapshot <- last_history()
-        snapshot[[hist_key]] <- current_hist
-        last_history(snapshot)
-
-        historyText(paste(current_hist, collapse = "\n"))
-      } else {
-        historyText("No history file found.")
-      }
+    if (file.exists(hist_path)) {
+      current_hist <- rev(readLines(hist_path, warn = FALSE))
     } else {
-      historyText(paste(shown_history()[[hist_key]], collapse = "\n"))
+      current_hist <- character()
     }
+
+    tmp <- shown_history()
+    tmp[[hist_key]] <- current_hist
+    shown_history(tmp)
+
+    if (!recording()) {
+      # Only flag new lines (after pause) as deleted
+      pause_idx <- pause_start_index()[[hist_key]]
+      n_lines <- length(current_hist)
+      if (n_lines > pause_idx) {
+        new_idx <- seq.int(pause_idx + 1, n_lines)
+        deleted <- delete_line_indices()
+        deleted[[hist_key]] <- unique(c(deleted[[hist_key]], new_idx))
+        delete_line_indices(deleted)
+      }
+    }
+
+    historyText(paste(rev(current_hist), collapse = "\n"))
   })
 
   output$selectableHistory <- renderUI({
@@ -112,6 +130,9 @@ server <- function(input, output, session) {
       )
     })
 
+    # After rendering, trigger scroll to bottom
+    session$sendCustomMessage("scrollHistoryToBottom", list())
+
     do.call(shiny::tagList, history_elements)
   })
 
@@ -120,7 +141,7 @@ server <- function(input, output, session) {
     hist_key <- if (history_type == "r") "r" else "term"
 
     all_lines <- shown_history()[[hist_key]]
-    hidden_indices <- rev(hidden_line_indices()[[hist_key]])
+    hidden_indices <- hidden_line_indices()[[hist_key]]
 
     if (length(hidden_indices) == 0) {
       return(shiny::div("No archived lines.", style = "color: #666; font-style: italic;"))
@@ -136,7 +157,7 @@ server <- function(input, output, session) {
       }
     })
 
-    do.call(shiny::tagList, archived_elements)
+    do.call(shiny::tagList, unique(archived_elements))
   })
 
   observe({
@@ -153,7 +174,11 @@ server <- function(input, output, session) {
     send_selected_now(FALSE)
 
     tryCatch({
-      cmds <- if (file.exists(selected_history_path)) readLines(selected_history_path, warn = FALSE) else character()
+      hist_key <- input$history_type %||% "r"
+      all_lines <- shown_history()[[hist_key]]
+      sel_idx <- selectedLines()
+
+      cmds <- if (length(sel_idx) > 0) all_lines[sel_idx] else character()
 
       if (length(cmds) == 0) {
         shiny::showNotification("No selected lines to send.", type = "warning")
@@ -172,13 +197,15 @@ server <- function(input, output, session) {
       )
 
       if (result$status_code == 200) {
-        hist_key <- input$history_type %||% "r"
-        all_lines <- shown_history()[[hist_key]]
-        hidden_idx <- which(all_lines %in% cmds)
+        hidden_idx <- sel_idx
 
         current_hidden <- hidden_line_indices()
         current_hidden[[hist_key]] <- unique(c(current_hidden[[hist_key]], hidden_idx))
         hidden_line_indices(current_hidden)
+
+        # Clear selected lines visually and reactively
+        selectedLines(NULL)
+        session$sendCustomMessage("clearSelectedLines", list())
 
         shiny::showNotification("Rules and files correctly generated from selection!", type = "message")
       } else if (result$status_code == 400) {
@@ -190,6 +217,7 @@ server <- function(input, output, session) {
       shiny::showNotification(paste("Error:", e$message), type = "error")
     })
   })
+
 
   observe({
     history_type <- input$history_type %||% "r"
@@ -255,16 +283,27 @@ server <- function(input, output, session) {
     history_type <- input$history_type %||% "r"
     hist_key <- if (history_type == "r") "r" else "term"
 
-    all_lines <- shown_history()[[hist_key]]
-    selected <- selectedLines()
-    selected_indices <- which(all_lines %in% selected)
+    selected_indices <- selectedLines()
 
+    # Mark lines as deleted
     new_deleted <- delete_line_indices()
     new_deleted[[hist_key]] <- unique(c(new_deleted[[hist_key]], selected_indices))
     delete_line_indices(new_deleted)
 
+    # Clear backend selection
+    selectedLines(NULL)
+
+    # Notify JS to clear visual selection
+    session$sendCustomMessage("clearSelectedLines", list())
+
+    # Remove contents from the .txt file
+    try({
+      writeLines(character(), selected_history_path)
+    }, silent = TRUE)
+
     shiny::showNotification("Selected lines have been permanently deleted from view.", type = "message", duration = 2)
   })
+
 
   output$export_history_btn <- downloadHandler(
     filename = function() {

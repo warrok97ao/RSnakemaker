@@ -304,6 +304,31 @@ create_ui <- function(history, term_history, archived_rules, selected_model) {
             ? '<span class=\"icon-center\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 13 13\" style=\"display:block;margin:auto;\"><rect x=\"2.5\" y=\"2.5\" width=\"8\" height=\"8\" fill=\"white\"/></svg></span>'
             : '<span class=\"icon-center\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 13 13\" style=\"display:block;margin:auto;\"><polygon points=\"4,2.5 10,6.5 4,10.5\" fill=\"white\"/></svg></span>';
         });
+
+Shiny.addCustomMessageHandler('clearSelectedLines', function(message) {
+  // Remove 'selected' class from all selected lines in history
+  document.querySelectorAll('.history-line.selected').forEach(function(el) {
+    el.classList.remove('selected');
+  });
+
+  // Clear stored selected lines array
+  if (window.selectedHistoryLines) {
+    window.selectedHistoryLines = [];
+  }
+
+  // Reset input value for Shiny
+  Shiny.setInputValue('selected_lines', [], { priority: 'event' });
+});
+
+        // Scroll history container to bottom after update (with delay to ensure DOM is ready)
+        Shiny.addCustomMessageHandler('scrollHistoryToBottom', function(message) {
+          setTimeout(function() {
+            var container = document.querySelector('.history-container');
+            if (container) {
+              container.scrollTop = container.scrollHeight;
+            }
+          }, 50); // Delay to ensure UI is rendered
+        });
       "))
     ),
     shiny::tags$div(
